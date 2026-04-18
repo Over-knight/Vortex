@@ -9,9 +9,9 @@ import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/util/intstr"
     "k8s.io/apimachinery/pkg/api/resource"
-    "github.com/Over-knight/vortex/internal/kubernetes"
-    "github.com/Over-knight/vortex/internal/models"
-    "github.com/Over-knight/vortex/pkg/utils"
+    "github.com/Over-knight/vortex/services/infrastructure-api/internal/kubernetes"
+    "github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
+    "github.com/Over-knight/vortex/services/infrastructure-api/pkg/utils"
 )
 
 func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string, req models.DatabaseRequest) (*models.DatabaseResponse, error) {
@@ -55,8 +55,12 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": dbID},
 			},
-			Spec: corev1.PodSpec{
-				Containers: []corev1.Container{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": dbID},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
 					{
 						Name: "postgres",
 						Image: "postgres:16-alpine",
@@ -98,7 +102,6 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 				},
 			},
 		},
-		},
 		VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
 			{
 				ObjectMeta: metav1.ObjectMeta{
@@ -115,7 +118,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 				},
 			},
 		},
-	},	
+	}
 
 	//4. Create the statefulset in k8s
 	_, err = k8sClient.Clientset.AppsV1().StatefulSets("vortex").Create(ctx, statefulSet, metav1.CreateOptions{})

@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/Over-knight/vortex/internal/kubernetes"
+	"github.com/Over-knight/vortex/services/infrastructure-api/internal/kubernetes"
 	"github.com/gin-gonic/gin"
-	"github.com/Over-knight/vortex/internal/models"
+	"github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
 	"log"
-	"github.com/Over-knight/vortex/internal/handlers"
+	"github.com/Over-knight/vortex/services/infrastructure-api/internal/handlers"
 )
 
 func main() {
