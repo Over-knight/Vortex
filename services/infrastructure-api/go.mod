@@ -1,4 +1,4 @@
-module github.com/Over-knight/vortex
+module github.com/Over-knight/vortex/services/infrastructure-api
 
 go 1.25.3
 
