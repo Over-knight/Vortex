@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/Over-knight/vortex/services/infrastructure-api/internal/kubernetes"
+	"github.com/Over-knight/vortex/services/infrastructure-api/internal/vortexkube"
 	"github.com/gin-gonic/gin"
 	"github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
 	"log"
@@ -11,7 +11,7 @@ import (
 
 func main() {
 	//initialize kubernetes client
-	k8sClient, err := kubernetes.NewK8sClient()
+	k8sClient, err := vortexkube.NewK8sClient()
 	if err != nil {
 		log.Fatalf("Failed to initialize k8s client: %v", err)
 	}

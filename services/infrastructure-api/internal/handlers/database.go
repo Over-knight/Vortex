@@ -13,13 +13,13 @@ import (
     "k8s.io/apimachinery/pkg/api/resource"
     apierrors "k8s.io/apimachinery/pkg/api/errors"
     "github.com/google/uuid"
-    "github.com/Over-knight/vortex/services/infrastructure-api/internal/kubernetes"
+    "github.com/Over-knight/vortex/services/infrastructure-api/internal/vortexkube"
     "github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
 )
 
 // EnsureNamespace creates a namespace for the project if it doesn't exist.
 // Returns the namespace name (e.g., "vortex-project-acme-corp")
-func EnsureNamespace(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string) (string, error) {
+func EnsureNamespace(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string) (string, error) {
 	namespaceName := fmt.Sprintf("vortex-project-%s", projectID)
 	
 	// Check if namespace already exists
@@ -51,7 +51,7 @@ func EnsureNamespace(ctx context.Context, k8sClient *kubernetes.K8sClient, proje
 	return "", fmt.Errorf("failed to check namespace %s: %w", namespaceName, err)
 }
 
-func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string, req models.DatabaseRequest) (*models.DatabaseResponse, error) {
+func ProvisionDatabase(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string, req models.DatabaseRequest) (*models.DatabaseResponse, error) {
 	// Step 0: Ensure project namespace exists
 	namespace, err := EnsureNamespace(ctx, k8sClient, projectID)
 	if err != nil {
@@ -126,7 +126,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 								ValueFrom: &corev1.EnvVarSource{
 									SecretKeyRef: &corev1.SecretKeySelector{
 										LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-                                        Key: "password",
+										Key: "password",
 									},
 								},
 							},
@@ -145,8 +145,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 				},
 			},
 		},
-		},
-		VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
+		VolumeClaimTemplates: []appsv1.PersistentVolumeClaimTemplate{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "postgres-storage",
@@ -154,7 +153,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 				Spec: corev1.PersistentVolumeClaimSpec{
 					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 					StorageClassName: stringPtr("standard"),
-					Resources: corev1.ResourceRequirements{
+					Resources: corev1.VolumeResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceStorage: createQuantity("10Gi"),
 						},
@@ -168,7 +167,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 	_, err = k8sClient.Clientset.AppsV1().StatefulSets(namespace).Create(ctx, statefulSet, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create statefulset: %w", err)
-	}	
+	}
 
 	//5. Create a service
 	service := &corev1.Service{
@@ -202,7 +201,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 }
 
 // GetDatabaseStatus retrieves the current status of a provisioned database
-func GetDatabaseStatus(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string, resourceID string) (*models.DatabaseResponse, error) {
+func GetDatabaseStatus(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string, resourceID string) (*models.DatabaseResponse, error) {
 	// Construct the namespace name
 	namespace := fmt.Sprintf("vortex-project-%s", projectID)
 	
@@ -242,7 +241,7 @@ func GetDatabaseStatus(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 }
 
 // DeleteDatabase removes all resources associated with a provisioned database
-func DeleteDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string, resourceID string) error {
+func DeleteDatabase(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string, resourceID string) error {
 	// Construct the namespace name
 	namespace := fmt.Sprintf("vortex-project-%s", projectID)
 	deletionPolicy := metav1.DeletePropagationForeground
