@@ -133,17 +133,18 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 						},
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
-								corev1.ResourceCPU: mustParseQuantity("100m"),
-								corev1.ResourceMemory: mustParseQuantity("256Mi"),
+								corev1.ResourceCPU: createQuantity("100m"),
+								corev1.ResourceMemory: createQuantity("256Mi"),
 							},
 							Limits: corev1.ResourceList{
-								corev1.ResourceCPU: mustParseQuantity("500m"),
-								corev1.ResourceMemory: mustParseQuantity("512Mi"),
+								corev1.ResourceCPU: createQuantity("500m"),
+								corev1.ResourceMemory: createQuantity("512Mi"),
 							},
 						},
 					},
 				},
 			},
+		},
 		},
 		VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
 			{
@@ -155,7 +156,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 					StorageClassName: stringPtr("standard"),
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
-							corev1.ResourceStorage: mustParseQuantity("10Gi"),
+							corev1.ResourceStorage: createQuantity("10Gi"),
 						},
 					},
 				},
@@ -200,11 +201,88 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 	}, nil
 }
 
+// GetDatabaseStatus retrieves the current status of a provisioned database
+func GetDatabaseStatus(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string, resourceID string) (*models.DatabaseResponse, error) {
+	// Construct the namespace name
+	namespace := fmt.Sprintf("vortex-project-%s", projectID)
+	
+	// Query the StatefulSet to check its status
+	statefulset, err := k8sClient.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, resourceID, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get statefulset %s in namespace %s: %w", resourceID, namespace, err)
+	}
+	
+	// Retrieve the Secret to get credentials (if they still exist)
+	secretName := fmt.Sprintf("%s-secret", resourceID)
+	secret, err := k8sClient.Clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get secret %s in namespace %s: %w", secretName, namespace, err)
+	}
+	
+	// Extract credentials from secret
+	username := string(secret.Data["username"])
+	password := string(secret.Data["password"])
+	
+	// Determine status based on replica readiness
+	status := "provisioning"
+	if statefulset.Status.ReadyReplicas > 0 {
+		status = "running"
+	}
+	
+	// Return response with current status
+	return &models.DatabaseResponse{
+		ID:        resourceID,
+		Name:      statefulset.Labels["app"], // Use the label as name approximation
+		Status:    status,
+		Endpoint:  fmt.Sprintf("%s:5432", resourceID),
+		Username:  username,
+		Password:  password, // Return password for now; could be masked in production
+		CreatedAt: statefulset.CreationTimestamp.Time,
+	}, nil
+}
+
+// DeleteDatabase removes all resources associated with a provisioned database
+func DeleteDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string, resourceID string) error {
+	// Construct the namespace name
+	namespace := fmt.Sprintf("vortex-project-%s", projectID)
+	deletionPolicy := metav1.DeletePropagationForeground
+	deletionOptions := metav1.DeleteOptions{
+		PropagationPolicy: &deletionPolicy,
+	}
+
+	// Step 1: Delete StatefulSet (this will cascade to pods)
+	err := k8sClient.Clientset.AppsV1().StatefulSets(namespace).Delete(ctx, resourceID, deletionOptions)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete statefulset %s in namespace %s: %w", resourceID, namespace, err)
+	}
+
+	// Step 2: Delete Service
+	err = k8sClient.Clientset.CoreV1().Services(namespace).Delete(ctx, resourceID, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete service %s in namespace %s: %w", resourceID, namespace, err)
+	}
+
+	// Step 3: Delete Secret
+	secretName := fmt.Sprintf("%s-secret", resourceID)
+	err = k8sClient.Clientset.CoreV1().Secrets(namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete secret %s in namespace %s: %w", secretName, namespace, err)
+	}
+
+	return nil
+}
+
 //Helper functions
 func int32Ptr(i int32) *int32 { return &i }
 func stringPtr(s string) *string { return &s }
-func mustParseQuantity(s string) resource.Quantity {
-	q, _ := resource.ParseQuantity(s)
+
+// createQuantity safely creates a resource quantity with validation
+func createQuantity(s string) resource.Quantity {
+	q, err := resource.ParseQuantity(s)
+	if err != nil {
+		// This should never happen with our hardcoded values, but safer than ignoring
+		return resource.Quantity{}
+	}
 	return q
 }
 

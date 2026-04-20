@@ -42,6 +42,32 @@ func main() {
 		}
 		c.JSON(201, response)
 	})
+
+	//Database status endpoint
+	router.GET("/v1/projects/:project_id/resources/databases/:resource_id", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+		resourceID := c.Param("resource_id")
+
+		response, err := handlers.GetDatabaseStatus(c.Request.Context(), k8sClient, projectID, resourceID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, response)
+	})
+
+	//Database deletion endpoint
+	router.DELETE("/v1/projects/:project_id/resources/databases/:resource_id", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+		resourceID := c.Param("resource_id")
+
+		err := handlers.DeleteDatabase(c.Request.Context(), k8sClient, projectID, resourceID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(204, nil)
+	})
 	log.Println("Starting Infrastructure API on port 8080")
 	router.Run(":8080")
 }
