@@ -2,6 +2,8 @@ package handlers
 
 import (
     "context"
+    "crypto/rand"
+    "encoding/hex"
     "fmt"
     
     appsv1 "k8s.io/api/apps/v1"
@@ -9,15 +11,56 @@ import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/util/intstr"
     "k8s.io/apimachinery/pkg/api/resource"
+    apierrors "k8s.io/apimachinery/pkg/api/errors"
+    "github.com/google/uuid"
     "github.com/Over-knight/vortex/services/infrastructure-api/internal/kubernetes"
     "github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
-    "github.com/Over-knight/vortex/services/infrastructure-api/pkg/utils"
 )
 
+// EnsureNamespace creates a namespace for the project if it doesn't exist.
+// Returns the namespace name (e.g., "vortex-project-acme-corp")
+func EnsureNamespace(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string) (string, error) {
+	namespaceName := fmt.Sprintf("vortex-project-%s", projectID)
+	
+	// Check if namespace already exists
+	_, err := k8sClient.Clientset.CoreV1().Namespaces().Get(ctx, namespaceName, metav1.GetOptions{})
+	if err == nil {
+		// Namespace already exists
+		return namespaceName, nil
+	}
+	
+	// If error is "not found", create the namespace
+	if apierrors.IsNotFound(err) {
+		namespace := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: namespaceName,
+				Labels: map[string]string{
+					"vortex.io/project": projectID,
+					"vortex.io/managed": "true",
+				},
+			},
+		}
+		_, createErr := k8sClient.Clientset.CoreV1().Namespaces().Create(ctx, namespace, metav1.CreateOptions{})
+		if createErr != nil {
+			return "", fmt.Errorf("failed to create namespace %s: %w", namespaceName, createErr)
+		}
+		return namespaceName, nil
+	}
+	
+	// Some other error occurred
+	return "", fmt.Errorf("failed to check namespace %s: %w", namespaceName, err)
+}
+
 func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, projectID string, req models.DatabaseRequest) (*models.DatabaseResponse, error) {
+	// Step 0: Ensure project namespace exists
+	namespace, err := EnsureNamespace(ctx, k8sClient, projectID)
+	if err != nil {
+		return nil, err
+	}
+
 	//1. Generate a unique ID and password
-	dbID := fmt.Sprintf("db-%s", utils.GenerateUUID())
-	password := utils.GenerateSecurePassword(16)
+	dbID := fmt.Sprintf("db-%s", GenerateUUID())
+	password := GenerateSecurePassword(16)
 	username := "vortex"
 
 	//2. Create a secret with credentials
@@ -25,7 +68,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: secretName,
-			Namespace: "vortex",
+			Namespace: namespace,
 		},
 		Type: corev1.SecretTypeOpaque,
 		StringData: map[string]string{
@@ -33,7 +76,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 			"password": password,
 		},
 	}
-	_, err := k8sClient.Clientset.CoreV1().Secrets("vortex").Create(ctx, secret, metav1.CreateOptions{})
+	_, err = k8sClient.Clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +85,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 	statefulSet := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: dbID,
-			Namespace: "vortex",
+			Namespace: namespace,
 			Labels: map[string]string{
 				"app": dbID,
 				"project": projectID,
@@ -121,7 +164,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 	}
 
 	//4. Create the statefulset in k8s
-	_, err = k8sClient.Clientset.AppsV1().StatefulSets("vortex").Create(ctx, statefulSet, metav1.CreateOptions{})
+	_, err = k8sClient.Clientset.AppsV1().StatefulSets(namespace).Create(ctx, statefulSet, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create statefulset: %w", err)
 	}	
@@ -130,7 +173,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: dbID,
-			Namespace: "vortex",
+			Namespace: namespace,
 		},
 		Spec: corev1.ServiceSpec{
 			ClusterIP: "None", //Headless service
@@ -140,7 +183,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *kubernetes.K8sClient, pro
 			},
 		},
 	}
-	_, err = k8sClient.Clientset.CoreV1().Services("vortex").Create(ctx, service, metav1.CreateOptions{})
+	_, err = k8sClient.Clientset.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create service: %w", err)
 	}	
@@ -165,3 +208,14 @@ func mustParseQuantity(s string) resource.Quantity {
 	return q
 }
 
+// GenerateUUID generates a unique 8-character ID
+func GenerateUUID() string {
+	return uuid.New().String()[:8]
+}
+
+// GenerateSecurePassword generates a cryptographically secure password
+func GenerateSecurePassword(length int) string {
+	b := make([]byte, length)
+	rand.Read(b)
+	return hex.EncodeToString(b)[:length]
+}
