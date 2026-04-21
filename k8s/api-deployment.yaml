@@ -1,0 +1,154 @@
+---
+# ServiceAccount for the Infrastructure API
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: infrastructure-api
+  namespace: vortex
+  labels:
+    app: infrastructure-api
+
+---
+# ClusterRole with permissions to manage infrastructure
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: infrastructure-api
+  labels:
+    app: infrastructure-api
+rules:
+  # Namespace management
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  
+  # Secret management
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "list", "watch", "delete", "update"]
+  
+  # Service management
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "delete", "update"]
+  
+  # StatefulSet management (for databases)
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["create", "get", "list", "watch", "delete", "update"]
+  
+  # Deployment management (for caches, compute)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "watch", "delete", "update"]
+  
+  # Pod status checking
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding to grant permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: infrastructure-api
+  labels:
+    app: infrastructure-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: infrastructure-api
+subjects:
+  - kind: ServiceAccount
+    name: infrastructure-api
+    namespace: vortex
+
+---
+# Deployment for Infrastructure API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infrastructure-api
+  namespace: vortex
+  labels:
+    app: infrastructure-api
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: infrastructure-api
+  template:
+    metadata:
+      labels:
+        app: infrastructure-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: infrastructure-api
+      containers:
+      - name: api
+        image: vortex-api:latest
+        imagePullPolicy: Never  # For Kind - load image locally
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: KUBERNETES_SERVICE_HOST
+          value: "kubernetes.default.svc.cluster.local"
+        - name: KUBERNETES_SERVICE_PORT
+          value: "443"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 2
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+
+---
+# Service to expose the API
+apiVersion: v1
+kind: Service
+metadata:
+  name: infrastructure-api
+  namespace: vortex
+  labels:
+    app: infrastructure-api
+spec:
+  type: ClusterIP
+  selector:
+    app: infrastructure-api
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP

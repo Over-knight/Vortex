@@ -27,3 +27,25 @@ type DatabaseResponse struct {
     Password  string    `json:"password"` // Return only once!
     CreatedAt time.Time `json:"created_at"`
 }
+
+// CacheRequest is what the client sends for cache provisioning
+type CacheRequest struct {
+    Name   string `json:"name" binding:"required"`
+    Engine string `json:"engine"` // "redis" (for future compatibility)
+    Config CacheConfig `json:"config"`
+}
+
+// CacheConfig holds cache-specific settings
+type CacheConfig struct {
+    MemoryMB int `json:"memory_mb"` // Memory limit for Redis
+    Replicas int `json:"replicas"`  // Usually 1 for stateless
+}
+
+// CacheResponse is what the API returns for cache operations
+type CacheResponse struct {
+    ID        string    `json:"id"`
+    Name      string    `json:"name"`
+    Status    string    `json:"status"` // "provisioning", "running", "failed"
+    Endpoint  string    `json:"endpoint"` // "cache-123:6379"
+    CreatedAt time.Time `json:"created_at"`
+}

@@ -68,6 +68,51 @@ func main() {
 		}
 		c.JSON(204, nil)
 	})
+
+	//Cache provisioning endpoint
+	router.POST("/v1/projects/:project_id/resources/caches", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+
+		var req models.CacheRequest
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "Invalid request"})
+			return
+		}
+
+		response, err := handlers.ProvisionCache(c.Request.Context(), k8sClient, projectID, req)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(201, response)
+	})
+
+	//Cache status endpoint
+	router.GET("/v1/projects/:project_id/resources/caches/:resource_id", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+		resourceID := c.Param("resource_id")
+
+		response, err := handlers.GetCacheStatus(c.Request.Context(), k8sClient, projectID, resourceID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, response)
+	})
+
+	//Cache deletion endpoint
+	router.DELETE("/v1/projects/:project_id/resources/caches/:resource_id", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+		resourceID := c.Param("resource_id")
+
+		err := handlers.DeleteCache(c.Request.Context(), k8sClient, projectID, resourceID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(204, nil)
+	})
+
 	log.Println("Starting Infrastructure API on port 8080")
 	router.Run(":8080")
 }
