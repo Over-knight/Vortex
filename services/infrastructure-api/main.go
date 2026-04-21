@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
+	"github.com/Over-knight/vortex/services/infrastructure-api/internal/handlers"
+	"github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
 	"github.com/Over-knight/vortex/services/infrastructure-api/internal/vortexkube"
 	"github.com/gin-gonic/gin"
-	"github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
 	"log"
-	"github.com/Over-knight/vortex/services/infrastructure-api/internal/handlers"
 )
 
 func main() {
@@ -100,12 +100,68 @@ func main() {
 		c.JSON(200, response)
 	})
 
+	//Cache Total endpoint
+	router.GET("/v1/projects/:project_id/resources/caches", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+
+		response, err := handlers.ListCaches(c.Request.Context(), k8sClient, projectID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"caches": response})
+	})
+
 	//Cache deletion endpoint
 	router.DELETE("/v1/projects/:project_id/resources/caches/:resource_id", func(c *gin.Context) {
 		projectID := c.Param("project_id")
 		resourceID := c.Param("resource_id")
 
 		err := handlers.DeleteCache(c.Request.Context(), k8sClient, projectID, resourceID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(204, nil)
+	})
+
+	//Compute provisioning endpoint
+	router.POST("/v1/projects/:project_id/resources/compute", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+
+		var req models.ComputeRequest
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "Invalid request"})
+			return
+		}
+
+		response, err := handlers.ProvisionCompute(c.Request.Context(), k8sClient, projectID, req)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(201, response)
+	})
+
+	//Compute status endpoint
+	router.GET("/v1/projects/:project_id/resources/compute/:resource_id", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+		resourceID := c.Param("resource_id")
+
+		response, err := handlers.GetComputeStatus(c.Request.Context(), k8sClient, projectID, resourceID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, response)
+	})
+
+	//Compute deletion endpoint
+	router.DELETE("/v1/projects/:project_id/resources/compute/:resource_id", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+		resourceID := c.Param("resource_id")
+
+		err := handlers.DeleteCompute(c.Request.Context(), k8sClient, projectID, resourceID)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return

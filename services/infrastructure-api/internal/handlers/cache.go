@@ -179,3 +179,34 @@ func DeleteCache(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID
 
 	return nil
 }
+
+func ListCaches(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string) ([]*models.CacheResponse, error) {
+	//construct the namespace name 
+	namespace := fmt.Sprintf("vortex-project-%s", projectID)
+
+	//List all deployments with  type=cache label
+	deployments, err := k8sClient.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "type=cache",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list caches in namespace %s: %w", namespace, err)
+	}
+	//Convert deployments to cache responses
+	caches := []*models.CacheResponse{}
+	for _, deployment := range deployments.Items {
+		status := "provisioning"
+		if deployment.Status.ReadyReplicas > 0 {
+			status = "running"
+		}
+
+		cache := &models.CacheResponse{
+			ID:        deployment.Name,
+			Name:      deployment.Labels["app"],
+			Status:    status,
+			Endpoint:  fmt.Sprintf("%s:6379", deployment.Name),
+			CreatedAt: deployment.CreationTimestamp.Time,
+		}
+		caches = append(caches, cache)
+	}
+	return caches, nil
+}
