@@ -146,13 +146,91 @@ Each resource type (DATABASE, CACHE, COMPUTE) has a handler with:
 - `EnsureNamespace()`: Creates project namespace if needed
 - `Provision*()`: Creates K8s resources
 - `Get*Status()`: Queries current state
-- `Delete*()`: Cleans up resources
+- `Delete*()`: Cleans up resources (cascading delete)
+
+**Current Handlers:**
+- `database.go`: PostgreSQL provisioning (ProvisionDatabase, GetDatabaseStatus, DeleteDatabase)
+- `cache.go`: Redis provisioning (ProvisionCache, GetCacheStatus, DeleteCache)
 
 **3. No Database Backend**
 - Kubernetes is the state store
 - API is stateless (no persistence layer)
 - State queries hit Kubernetes, not a database
 - Enables horizontal scaling of API replicas
+
+### D. In-Cluster Deployment Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Kubernetes Cluster (Kind v1.35.0)                           │
+│                                                             │
+│ ┌───────────────────────────────────────────────────────┐   │
+│ │ vortex namespace                                      │   │
+│ │                                                       │   │
+│ │ ┌─────────────────────────────────────────────────┐   │   │
+│ │ │ Infrastructure API Deployment                  │   │   │
+│ │ │ - ServiceAccount (pod identity)                │   │   │
+│ │ │ - Container: vortex-api:latest                 │   │   │
+│ │ │ - Port: 8080                                   │   │   │
+│ │ │ - Security: Non-root, read-only FS             │   │   │
+│ │ │ - Health probes (liveness/readiness)           │   │   │
+│ │ └─────────────────────────────────────────────────┘   │   │
+│ │                    ↓                                   │   │
+│ │ ┌─────────────────────────────────────────────────┐   │   │
+│ │ │ ClusterRole: infrastructure-api                │   │   │
+│ │ │ - create/get/list/delete namespaces            │   │   │
+│ │ │ - create/get/list/delete secrets               │   │   │
+│ │ │ - create/get/list/delete services              │   │   │
+│ │ │ - create/get/list/delete statefulsets          │   │   │
+│ │ │ - create/get/list/delete deployments           │   │   │
+│ │ │ - get/list pods                                │   │   │
+│ │ └─────────────────────────────────────────────────┘   │   │
+│ └───────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Design Decision:** API runs inside cluster
+- Pod can use `rest.InClusterConfig()` automatically
+- No external kubeconfig needed
+- ServiceAccount token injected by Kubernetes
+- Scales independently of application layer
+
+### D. In-Cluster Deployment Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Kubernetes Cluster (Kind v1.35.0)                       │
+│                                                         │
+│ ┌─────────────────────────────────────────────────┐    │
+│ │ vortex namespace                                 │    │
+│ │                                                  │    │
+│ │ ┌──────────────────────────────────────────┐    │    │
+│ │ │ Infrastructure API Deployment            │    │    │
+│ │ │ - ServiceAccount (pod identity)           │    │    │
+│ │ │ - Container: vortex-api:latest            │    │    │
+│ │ │ - Port: 8080                              │    │    │
+│ │ │ - Security: Non-root, read-only FS        │    │    │
+│ │ │ - Health probes (liveness/readiness)      │    │    │
+│ │ └──────────────────────────────────────────┘    │    │
+│ │                     ↓                             │    │
+│ │ ┌──────────────────────────────────────────┐    │    │
+│ │ │ ClusterRole: infrastructure-api           │    │    │
+│ │ │ - create/get/list/delete namespaces      │    │    │
+│ │ │ - create/get/list/delete secrets         │    │    │
+│ │ │ - create/get/list/delete services        │    │    │
+│ │ │ - create/get/list/delete statefulsets    │    │    │
+│ │ │ - create/get/list/delete deployments     │    │    │
+│ │ │ - get/list pods                          │    │    │
+│ │ └──────────────────────────────────────────┘    │    │
+│ └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Key Design Decision:** API runs inside cluster
+- Pod can use `rest.InClusterConfig()` automatically
+- No external kubeconfig needed
+- ServiceAccount token injected by Kubernetes
+- Scales independently of application layer
 
 ### B. Kubernetes Cluster (Kind)
 
@@ -180,11 +258,17 @@ Each resource type (DATABASE, CACHE, COMPUTE) has a handler with:
 
 #### Dynamic Resources (Created by API)
 
-When user requests a database via API:
+**Databases:** When user requests a database via API:
 1. **Secret:** `db-{resourceID}-secret` contains username/password
 2. **StatefulSet:** `{resourceID}` runs PostgreSQL
 3. **Service:** `{resourceID}` exposes StatefulSet on port 5432
 4. Stored in namespace: `vortex-project-{projectID}`
+
+**Caches:** When user requests a Redis cache via API:
+1. **Deployment:** `cache-{resourceID}` runs Redis (stateless)
+2. **Service:** `cache-{resourceID}` exposes Deployment on port 6379
+3. Stored in namespace: `vortex-project-{projectID}`
+4. No Secret needed (Redis is stateless, no credentials)
 
 ### C. Client-Go Integration
 
@@ -251,6 +335,32 @@ type DatabaseResponse struct {
 }
 ```
 
+**CacheRequest**
+```go
+type CacheRequest struct {
+    Name   string      `json:"name"`
+    Engine string      `json:"engine"`   // "redis" (extensible for memcached, etc.)
+    Config CacheConfig `json:"config"`
+}
+
+type CacheConfig struct {
+    MemoryMB int `json:"memory_mb"`  // Default: 256
+    Replicas int `json:"replicas"`   // Default: 1
+}
+```
+
+**CacheResponse**
+```go
+type CacheResponse struct {
+    ID        string    `json:"id"`           // Unique resource ID (UUID)
+    Name      string    `json:"name"`
+    Status    string    `json:"status"`       // "provisioning" or "running"
+    Endpoint  string    `json:"endpoint"`     // "cache-{ID}:6379" (internal DNS)
+    CreatedAt time.Time `json:"created_at"`
+    // Note: No password field (Redis stateless, auth handled separately)
+}
+```
+
 ### Status Values
 
 - **`provisioning`**: K8s resource created, pod not ready yet
@@ -269,6 +379,7 @@ type DatabaseResponse struct {
 
 ### Endpoint Structure
 
+**Database Endpoints:**
 ```
 POST   /v1/projects/{project_id}/resources/databases
        → Create database for project
@@ -281,6 +392,28 @@ GET    /v1/projects/{project_id}/resources/databases/{resource_id}
 DELETE /v1/projects/{project_id}/resources/databases/{resource_id}
        → Remove database and all associated K8s objects
        → Response: 200 OK or error
+```
+
+**Cache Endpoints:**
+```
+POST   /v1/projects/{project_id}/resources/caches
+       → Create Redis cache for project
+       → Response: CacheResponse with status="provisioning"
+
+GET    /v1/projects/{project_id}/resources/caches/{resource_id}
+       → Check status of existing cache
+       → Response: CacheResponse with current status
+
+DELETE /v1/projects/{project_id}/resources/caches/{resource_id}
+       → Remove cache and all associated K8s objects
+       → Response: 200 OK or error
+```
+
+**Health Endpoint:**
+```
+GET    /health
+       → Returns {"status": "ok"}
+       → Used for liveness/readiness probes in Kubernetes
 ```
 
 ### Request-Response Flow

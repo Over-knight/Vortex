@@ -119,7 +119,8 @@ Vortex/
 ├── kind-config.yaml                 # Kubernetes cluster configuration
 │
 ├── k8s/                             # Infrastructure deployment manifests
-│   ├── secrets.yaml                 # Base credentials (PostgreSQL user/pass)
+│   ├── api-deployment.yaml          # Infrastructure API deployment manifest
+│   │                                # (ServiceAccount, ClusterRole, Deployment, Service)
 │   │
 │   ├── postgres/
 │   │   ├── statefulset.yaml         # PostgreSQL database server
@@ -136,11 +137,12 @@ Vortex/
         ├── go.mod                   # Go module definition
         │
         ├── internal/
-        │   ├── kubernetes/
+        │   ├── vortexkube/
         │   │   └── client.go        # K8s API client (connects to cluster)
         │   │
         │   ├── handlers/
-        │   │   └── database.go      # Request handler (provisions resources)
+        │   │   ├── database.go      # Database provisioning logic
+        │   │   └── cache.go         # Redis cache provisioning logic
         │   │
         │   └── models/
         │       └── resources.go     # Data structures (requests/responses)
@@ -179,16 +181,35 @@ Vortex/
 - ✅ K8s client connection (`client-go` library)
 
 ### 4. **Core Provisioning Logic**
-- ✅ Request/Response models defined
-- ✅ Password generation (cryptographically secure)
-- ✅ UUID generation for unique resource IDs
-- ✅ Database provisioning handler structure
+- ✅ Database provisioning handler
   - Creates K8s Secrets per instance
   - Generates StatefulSet with PostgreSQL
   - Creates Service for DNS access
   - Returns connection details to user
 
-### 5. **Code Quality**
+- ✅ Redis cache provisioning handler
+  - Generates Deployment with Redis
+  - Creates Service for DNS access
+  - Returns cache endpoint (no password)
+  - Stateless design (no persistent storage)
+
+- ✅ Request/Response models
+  - DatabaseRequest/DatabaseResponse
+  - CacheRequest/CacheResponse
+  - Password generation (cryptographically secure)
+  - UUID generation for unique resource IDs
+
+### 5. **Kubernetes Deployment**
+- ✅ RBAC manifest (api-deployment.yaml)
+  - ServiceAccount for pod identity
+  - ClusterRole with permissions (namespaces, secrets, services, statefulsets, deployments, pods)
+  - ClusterRoleBinding to grant permissions
+  - Deployment running in vortex namespace
+- ✅ In-cluster authentication (rest.InClusterConfig with kubeconfig fallback)
+- ✅ Security context (non-root user, read-only filesystem, no capabilities)
+- ✅ Health probes (liveness and readiness)
+
+### 6. **Code Quality**
 - ✅ Proper error handling patterns
 - ✅ K8s object building with type safety
 - ✅ Resource isolation per project
