@@ -1,0 +1,345 @@
+{
+  "info": {
+    "_postman_id": "vortex-infrastructure-api",
+    "name": "Vortex Infrastructure API",
+    "description": "Multi-tenant Infrastructure Provisioning API for Kubernetes.\n\n## Overview\nProvisions and manages PostgreSQL databases and Redis caches dynamically in Kubernetes clusters with complete namespace isolation per project.\n\n## Authentication\nCurrently no authentication (development mode). Production deployment should add JWT/OAuth2.\n\n## Base URL\n`http://localhost:8080` (local Kind cluster)\n`http://infrastructure-api:8080` (inside Kubernetes cluster)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health & Status",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Check if the Infrastructure API is running and connected to the Kubernetes cluster."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/health",
+                  "protocol": "http",
+                  "host": ["localhost"],
+                  "port": "8080",
+                  "path": ["health"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n    \"status\": \"ok\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Database Resources",
+      "item": [
+        {
+          "name": "Provision Database",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"production_db\",\n  \"engine\": \"postgres\",\n  \"version\": \"16\",\n  \"config\": {\n    \"storage_gb\": 10,\n    \"replicas\": 1\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/projects/{{project_id}}/resources/databases",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "{{project_id}}", "resources", "databases"]
+            },
+            "description": "Provision a new PostgreSQL database in the specified project.\n\n**Process:**\n1. Creates namespace `vortex-project-{project_id}` if it doesn't exist\n2. Generates unique database ID and secure password\n3. Creates Kubernetes Secret with credentials\n4. Creates StatefulSet with PostgreSQL 16-alpine\n5. Creates Service for DNS access\n6. Returns connection details and status\n\n**Status:** Will be \"provisioning\" initially. Poll the status endpoint until it changes to \"running\"."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"production_db\",\n  \"engine\": \"postgres\",\n  \"version\": \"16\",\n  \"config\": {\n    \"storage_gb\": 10,\n    \"replicas\": 1\n  }\n}"
+                },
+                "url": {
+                  "raw": "http://localhost:8080/v1/projects/acme-corp/resources/databases",
+                  "protocol": "http",
+                  "host": ["localhost"],
+                  "port": "8080",
+                  "path": ["v1", "projects", "acme-corp", "resources", "databases"]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n    \"id\": \"db-550e8400-e29b-41d4-a716-446655440000\",\n    \"name\": \"production_db\",\n    \"status\": \"provisioning\",\n    \"endpoint\": \"db-550e8400-e29b-41d4-a716-446655440000:5432\",\n    \"username\": \"vortex\",\n    \"password\": \"kL9mP2qXvW8nD4jF6sH1\",\n    \"created_at\": \"2026-04-21T14:30:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Database Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/projects/{{project_id}}/resources/databases/{{database_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "{{project_id}}", "resources", "databases", "{{database_id}}"]
+            },
+            "description": "Retrieve the current status of a provisioned database.\n\n**Status Values:**\n- `provisioning`: Pod is initializing (usually 30-60 seconds)\n- `running`: Database is ready to accept connections\n- `failed`: An error occurred during provisioning\n\n**Usage:** Poll this endpoint every 5-10 seconds until status becomes \"running\"."
+          },
+          "response": [
+            {
+              "name": "200 OK - Provisioning",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/v1/projects/acme-corp/resources/databases/db-550e8400-e29b-41d4-a716-446655440000",
+                  "protocol": "http",
+                  "host": ["localhost"],
+                  "port": "8080",
+                  "path": ["v1", "projects", "acme-corp", "resources", "databases", "db-550e8400-e29b-41d4-a716-446655440000"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n    \"id\": \"db-550e8400-e29b-41d4-a716-446655440000\",\n    \"name\": \"production_db\",\n    \"status\": \"provisioning\",\n    \"endpoint\": \"db-550e8400-e29b-41d4-a716-446655440000:5432\",\n    \"username\": \"vortex\",\n    \"password\": \"kL9mP2qXvW8nD4jF6sH1\",\n    \"created_at\": \"2026-04-21T14:30:00Z\"\n}"
+            },
+            {
+              "name": "200 OK - Running",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/v1/projects/acme-corp/resources/databases/db-550e8400-e29b-41d4-a716-446655440000",
+                  "protocol": "http",
+                  "host": ["localhost"],
+                  "port": "8080",
+                  "path": ["v1", "projects", "acme-corp", "resources", "databases", "db-550e8400-e29b-41d4-a716-446655440000"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n    \"id\": \"db-550e8400-e29b-41d4-a716-446655440000\",\n    \"name\": \"production_db\",\n    \"status\": \"running\",\n    \"endpoint\": \"db-550e8400-e29b-41d4-a716-446655440000:5432\",\n    \"username\": \"vortex\",\n    \"password\": \"kL9mP2qXvW8nD4jF6sH1\",\n    \"created_at\": \"2026-04-21T14:30:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Database",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/projects/{{project_id}}/resources/databases/{{database_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "{{project_id}}", "resources", "databases", "{{database_id}}"]
+            },
+            "description": "Delete a provisioned database and all associated resources.\n\n**Cascading Deletion:**\n1. Deletes StatefulSet (with foreground propagation)\n2. Deletes Service\n3. Deletes Secret with credentials\n\n**Note:** The namespace is NOT deleted - it may contain other resources.\n\n**Returns:** 204 No Content on success"
+          },
+          "response": [
+            {
+              "name": "204 No Content",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:8080/v1/projects/acme-corp/resources/databases/db-550e8400-e29b-41d4-a716-446655440000",
+                  "protocol": "http",
+                  "host": ["localhost"],
+                  "port": "8080",
+                  "path": ["v1", "projects", "acme-corp", "resources", "databases", "db-550e8400-e29b-41d4-a716-446655440000"]
+                }
+              },
+              "status": "No Content",
+              "code": 204,
+              "header": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Multi-Tenancy Test Workflow",
+      "item": [
+        {
+          "name": "1. Create Database - Project A",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"project_a_database\",\n  \"engine\": \"postgres\",\n  \"version\": \"16\",\n  \"config\": {\n    \"storage_gb\": 10,\n    \"replicas\": 1\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/projects/project-a/resources/databases",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "project-a", "resources", "databases"]
+            },
+            "description": "Step 1: Provision database for Project A\n\nThis creates:\n- Namespace: `vortex-project-project-a`\n- Resources isolated from Project B\n\nSave the returned `id` for later use."
+          }
+        },
+        {
+          "name": "2. Create Database - Project B",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"project_b_database\",\n  \"engine\": \"postgres\",\n  \"version\": \"16\",\n  \"config\": {\n    \"storage_gb\": 5,\n    \"replicas\": 1\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/projects/project-b/resources/databases",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "project-b", "resources", "databases"]
+            },
+            "description": "Step 2: Provision database for Project B\n\nThis creates:\n- Namespace: `vortex-project-project-b`\n- Completely isolated from Project A\n\nSave the returned `id` for later use."
+          }
+        },
+        {
+          "name": "3. Poll Status - Project A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/projects/project-a/resources/databases/db-550e8400-e29b-41d4-a716-446655440000",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "project-a", "resources", "databases", "db-550e8400-e29b-41d4-a716-446655440000"]
+            },
+            "description": "Step 3: Check status of Project A's database\n\nRepeat every 5 seconds until status changes to \"running\"."
+          }
+        },
+        {
+          "name": "4. Poll Status - Project B",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/projects/project-b/resources/databases/db-660f9511-f40c-52e5-b827-557766551111",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "project-b", "resources", "databases", "db-660f9511-f40c-52e5-b827-557766551111"]
+            },
+            "description": "Step 4: Check status of Project B's database\n\nRepeat every 5 seconds until status changes to \"running\"."
+          }
+        },
+        {
+          "name": "5. Delete Database - Project A",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/projects/project-a/resources/databases/db-550e8400-e29b-41d4-a716-446655440000",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "project-a", "resources", "databases", "db-550e8400-e29b-41d4-a716-446655440000"]
+            },
+            "description": "Step 5: Delete Project A's database\n\nVerifies that Project B's database is unaffected by deletion in Project A's namespace."
+          }
+        },
+        {
+          "name": "6. Verify Project B Unaffected",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/projects/project-b/resources/databases/db-660f9511-f40c-52e5-b827-557766551111",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "project-b", "resources", "databases", "db-660f9511-f40c-52e5-b827-557766551111"]
+            },
+            "description": "Step 6: Confirm Project B's database still exists and is running\n\nThis proves namespace isolation is working correctly."
+          }
+        },
+        {
+          "name": "7. Delete Database - Project B",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/projects/project-b/resources/databases/db-660f9511-f40c-52e5-b827-557766551111",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "projects", "project-b", "resources", "databases", "db-660f9511-f40c-52e5-b827-557766551111"]
+            },
+            "description": "Step 7: Clean up - Delete Project B's database"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string",
+      "description": "Base URL of the Infrastructure API. Change to http://infrastructure-api:8080 for in-cluster access."
+    },
+    {
+      "key": "project_id",
+      "value": "acme-corp",
+      "type": "string",
+      "description": "Replace with your actual project ID"
+    },
+    {
+      "key": "database_id",
+      "value": "db-550e8400-e29b-41d4-a716-446655440000",
+      "type": "string",
+      "description": "Replace with the ID returned from the Provision Database response"
+    }
+  ]
+}
