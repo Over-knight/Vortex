@@ -1,34 +1,34 @@
 package handlers
 
 import (
-    "context"
-    "crypto/rand"
-    "encoding/hex"
-    "fmt"
-    
-    appsv1 "k8s.io/api/apps/v1"
-    corev1 "k8s.io/api/core/v1"
-    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-    "k8s.io/apimachinery/pkg/util/intstr"
-    "k8s.io/apimachinery/pkg/api/resource"
-    apierrors "k8s.io/apimachinery/pkg/api/errors"
-    "github.com/google/uuid"
-    "github.com/Over-knight/vortex/services/infrastructure-api/internal/vortexkube"
-    "github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+
+	"github.com/Over-knight/vortex/services/infrastructure-api/internal/models"
+	"github.com/Over-knight/vortex/services/infrastructure-api/internal/vortexkube"
+	"github.com/google/uuid"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // EnsureNamespace creates a namespace for the project if it doesn't exist.
 // Returns the namespace name (e.g., "vortex-project-acme-corp")
 func EnsureNamespace(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string) (string, error) {
 	namespaceName := fmt.Sprintf("vortex-project-%s", projectID)
-	
+
 	// Check if namespace already exists
 	_, err := k8sClient.Clientset.CoreV1().Namespaces().Get(ctx, namespaceName, metav1.GetOptions{})
 	if err == nil {
 		// Namespace already exists
 		return namespaceName, nil
 	}
-	
+
 	// If error is "not found", create the namespace
 	if apierrors.IsNotFound(err) {
 		namespace := &corev1.Namespace{
@@ -46,7 +46,7 @@ func EnsureNamespace(ctx context.Context, k8sClient *vortexkube.K8sClient, proje
 		}
 		return namespaceName, nil
 	}
-	
+
 	// Some other error occurred
 	return "", fmt.Errorf("failed to check namespace %s: %w", namespaceName, err)
 }
@@ -67,7 +67,7 @@ func ProvisionDatabase(ctx context.Context, k8sClient *vortexkube.K8sClient, pro
 	secretName := fmt.Sprintf("%s-secret", dbID)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: secretName,
+			Name:      secretName,
 			Namespace: namespace,
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -81,20 +81,20 @@ func ProvisionDatabase(ctx context.Context, k8sClient *vortexkube.K8sClient, pro
 		return nil, err
 	}
 
-	//3. Create a statefulSet 
+	//3. Create a statefulSet
 	statefulSet := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: dbID,
+			Name:      dbID,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"app": dbID,
+				"app":     dbID,
 				"project": projectID,
-				"type": "database",
+				"type":    "database",
 			},
 		},
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName: dbID,
-			Replicas: int32Ptr(1),
+			Replicas:    int32Ptr(1),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": dbID},
 			},
@@ -104,58 +104,59 @@ func ProvisionDatabase(ctx context.Context, k8sClient *vortexkube.K8sClient, pro
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
-					{
-						Name: "postgres",
-						Image: "postgres:16-alpine",
-						Ports: []corev1.ContainerPort{
-							{ContainerPort: 5432},
-						},
-						Env: []corev1.EnvVar{
-							{Name: "POSTGRES_DB", Value: "vortex_db"},
-							{
-								Name: "POSTGRES_USER",
-								ValueFrom: &corev1.EnvVarSource{
-									SecretKeyRef: &corev1.SecretKeySelector{
-										LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-										Key: "username",
+						{
+							Name:  "postgres",
+							Image: "postgres:16-alpine",
+							Ports: []corev1.ContainerPort{
+								{ContainerPort: 5432},
+							},
+							Env: []corev1.EnvVar{
+								{Name: "POSTGRES_DB", Value: "vortex_db"},
+								{
+									Name: "POSTGRES_USER",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+											Key:                  "username",
+										},
+									},
+								},
+								{
+									Name: "POSTGRES_PASSWORD",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+											Key:                  "password",
+										},
 									},
 								},
 							},
-							{
-								Name: "POSTGRES_PASSWORD",
-								ValueFrom: &corev1.EnvVarSource{
-									SecretKeyRef: &corev1.SecretKeySelector{
-										LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-										Key: "password",
-									},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    createQuantity("100m"),
+									corev1.ResourceMemory: createQuantity("256Mi"),
 								},
-							},
-						},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU: createQuantity("100m"),
-								corev1.ResourceMemory: createQuantity("256Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceCPU: createQuantity("500m"),
-								corev1.ResourceMemory: createQuantity("512Mi"),
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    createQuantity("500m"),
+									corev1.ResourceMemory: createQuantity("512Mi"),
+								},
 							},
 						},
 					},
 				},
 			},
-		},
-		VolumeClaimTemplates: []appsv1.PersistentVolumeClaimTemplate{
-			{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "postgres-storage",
-				},
-				Spec: corev1.PersistentVolumeClaimSpec{
-					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-					StorageClassName: stringPtr("standard"),
-					Resources: corev1.VolumeResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceStorage: createQuantity("10Gi"),
+			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "postgres-storage",
+					},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						StorageClassName: stringPtr("standard"),
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: createQuantity("10Gi"),
+							},
 						},
 					},
 				},
@@ -172,21 +173,21 @@ func ProvisionDatabase(ctx context.Context, k8sClient *vortexkube.K8sClient, pro
 	//5. Create a service
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: dbID,
+			Name:      dbID,
 			Namespace: namespace,
 		},
 		Spec: corev1.ServiceSpec{
 			ClusterIP: "None", //Headless service
-			Selector: map[string]string{"app": dbID},
+			Selector:  map[string]string{"app": dbID},
 			Ports: []corev1.ServicePort{
-			{Port: 5432, TargetPort: intstr.FromInt(5432)},
+				{Port: 5432, TargetPort: intstr.FromInt(5432)},
 			},
 		},
 	}
 	_, err = k8sClient.Clientset.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create service: %w", err)
-	}	
+	}
 
 	//step 6: Return response (status is "provisioning" until pod is ready)
 	return &models.DatabaseResponse{
@@ -204,30 +205,30 @@ func ProvisionDatabase(ctx context.Context, k8sClient *vortexkube.K8sClient, pro
 func GetDatabaseStatus(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string, resourceID string) (*models.DatabaseResponse, error) {
 	// Construct the namespace name
 	namespace := fmt.Sprintf("vortex-project-%s", projectID)
-	
+
 	// Query the StatefulSet to check its status
 	statefulset, err := k8sClient.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, resourceID, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get statefulset %s in namespace %s: %w", resourceID, namespace, err)
 	}
-	
+
 	// Retrieve the Secret to get credentials (if they still exist)
 	secretName := fmt.Sprintf("%s-secret", resourceID)
 	secret, err := k8sClient.Clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret %s in namespace %s: %w", secretName, namespace, err)
 	}
-	
+
 	// Extract credentials from secret
 	username := string(secret.Data["username"])
 	password := string(secret.Data["password"])
-	
+
 	// Determine status based on replica readiness
 	status := "provisioning"
 	if statefulset.Status.ReadyReplicas > 0 {
 		status = "running"
 	}
-	
+
 	// Return response with current status
 	return &models.DatabaseResponse{
 		ID:        resourceID,
@@ -271,8 +272,8 @@ func DeleteDatabase(ctx context.Context, k8sClient *vortexkube.K8sClient, projec
 	return nil
 }
 
-//Helper functions
-func int32Ptr(i int32) *int32 { return &i }
+// Helper functions
+func int32Ptr(i int32) *int32    { return &i }
 func stringPtr(s string) *string { return &s }
 
 // createQuantity safely creates a resource quantity with validation
