@@ -249,20 +249,23 @@ psql -h db-f8a2c5d1 -U vortex -d vortex_db
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Kind cluster | ✅ Done | v1.35.0 running |
-| PostgreSQL | ✅ Done | Stateful, persistent |
-| Redis | ✅ Done | Stateless, ephemeral |
-| API framework | ✅ Done | Gin + Go structure |
-| K8s client | ✅ Done | client-go integration |
-| Database provisioning | ✅ Done | Full handler + models |
-| Security (Secrets) | ✅ Done | Per-instance credentials |
-| Error handling | ✅ Done | Proper Go patterns |
-| Multi-tenancy | ✅ Done | Project-based isolation |
-| **Redis provisioning** | 🚧 In Progress | Similar to database |
-| **Compute provisioning** | 📋 Planned | Pods/Deployments |
-| **Monitoring** | 📋 Planned | Prometheus + Grafana |
-| **CLI tool** | 📋 Planned | Easy resource management |
-| **IAM/RBAC** | 📋 Planned | User permissions |
+| Kind cluster | ✅ Done | v1.35.0 running on Windows via Docker |
+| PostgreSQL | ✅ Done | Stateful, persistent storage (10GB) |
+| Redis | ✅ Done | Stateless, in-memory cache |
+| API framework | ✅ Done | Gin + Go with proper package structure |
+| K8s client | ✅ Done | client-go v0.35.4 integration |
+| Database provisioning | ✅ Done | Full endpoint (POST/GET/DELETE) |
+| Resource isolation | ✅ Done | Project-based namespaces |
+| Security | ✅ Done | Per-instance K8s Secrets |
+| Error handling | ✅ Done | Proper Go patterns with type safety |
+| Multi-tenancy | ✅ Done | vortex-project-{projectID} isolation |
+| Status tracking | ✅ Done | StatefulSet readiness monitoring |
+| Resource cleanup | ✅ Done | Cascading delete with foreground propagation |
+| Docker image | ✅ Done | Multi-stage build, non-root user |
+| **K8s Deployment** | 🚧 Next | Deploy API service to cluster |
+| **Integration tests** | 🚧 Next | End-to-end workflow testing |
+| **Redis provisioning** | 📋 Planned | CACHE resource handler |
+| **Compute provisioning** | 📋 Planned | COMPUTE resource handler |
 
 ---
 
