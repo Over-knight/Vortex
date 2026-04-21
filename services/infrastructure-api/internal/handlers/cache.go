@@ -180,8 +180,9 @@ func DeleteCache(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID
 	return nil
 }
 
+// ListCacheStatus retrieves the current status of a all cache
 func ListCaches(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string) ([]*models.CacheResponse, error) {
-	//construct the namespace name 
+	//construct the namespace name
 	namespace := fmt.Sprintf("vortex-project-%s", projectID)
 
 	//List all deployments with  type=cache label

@@ -221,3 +221,48 @@ func defaultIfEmpty(s string, defaultValue string) string {
 	}
 	return s
 }
+
+// ListComputeStatus retrieves the current status of all compute instance
+func ListComputeStatus(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string) ([]*models.ComputeResponse, error) {
+	namespace := fmt.Sprintf("vortex-project-%s", projectID)
+
+	// Get the Deployment
+	deployments, err := k8sClient.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "type=compute",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployment %s in namespace %s: %w", namespace, err)
+	}
+
+	// Determine status based on replica readiness
+	computes := []*models.ComputeResponse{}
+	for _, deployment := range deployments.Items {
+		// Get the Service to extract endpoints
+		service, err := k8sClient.Clientset.CoreV1().Services(namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get service %s in namespace %s: %w", deployment.Name, err)
+		}
+		// Build endpoints from service ports
+		endpoints := []string{}
+		if service != nil {
+			for _, port := range service.Spec.Ports {
+				endpoints = append(endpoints, fmt.Sprintf("%s:%d", deployment.Name, port.Port))
+			}
+		}
+		status := "provisioning"
+		if deployment.Status.ReadyReplicas > 0 {
+			status = "running"
+		}
+
+		compute := &models.ComputeResponse{
+			ID:        deployment.Name,
+			Name:      deployment.Labels["app"],
+			Status:    status,
+			Endpoints: endpoints,
+			CreatedAt: deployment.CreationTimestamp.Time,
+		}
+		computes = append(computes, compute)
+	}
+
+	return computes, nil
+}
