@@ -56,6 +56,18 @@ func main() {
 		c.JSON(200, response)
 	})
 
+	//Database list endpoint
+	router.GET("/v1/projects/:project_id/resources/databases", func(c *gin.Context) {
+		projectID := c.Param("project_id")
+
+		response, err := handlers.ListDatabases(c.Request.Context(), k8sClient, projectID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"databases": response})
+	})
+
 	//Database deletion endpoint
 	router.DELETE("/v1/projects/:project_id/resources/databases/:resource_id", func(c *gin.Context) {
 		projectID := c.Param("project_id")
@@ -156,8 +168,8 @@ func main() {
 		c.JSON(200, response)
 	})
 
-	//Compute status endpoint
-	router.GET("/v1/projects/:project_id/resources/compute/:resource_id", func(c *gin.Context) {
+	//Compute list endpoint
+	router.GET("/v1/projects/:project_id/resources/compute", func(c *gin.Context) {
 		projectID := c.Param("project_id")
 
 		response, err := handlers.ListComputeStatus(c.Request.Context(), k8sClient, projectID)

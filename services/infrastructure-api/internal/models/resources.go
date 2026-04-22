@@ -21,8 +21,9 @@ type DBConfig struct {
 type DatabaseResponse struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
+	Engine    string    `json:"engine"`
 	Status    string    `json:"status"`   // "provisioning", "running", "failed"
-	Endpoint  string    `json:"endpoint"` // "postgres-db-123:5432" (empty until ready)
+	Endpoint  string    `json:"endpoint"` // external host:port, "pending" until LB is assigned
 	Username  string    `json:"username"`
 	Password  string    `json:"password"` // Return only once!
 	CreatedAt time.Time `json:"created_at"`
