@@ -13,19 +13,16 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// ProvisionCompute creates a Kubernetes Deployment for user application code
 func ProvisionCompute(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string, req models.ComputeRequest) (*models.ComputeResponse, error) {
-	// Step 0: Ensure project namespace exists
 	namespace, err := EnsureNamespace(ctx, k8sClient, projectID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 1: Generate a unique ID
 	computeID := fmt.Sprintf("comp-%s", GenerateUUID())
 
-	// Step 2: Build container ports from request
-	containerPorts := []corev1.ContainerPort{}
+	// Build container ports.
+	containerPorts := make([]corev1.ContainerPort, 0, len(req.Ports))
 	for _, p := range req.Ports {
 		containerPorts = append(containerPorts, corev1.ContainerPort{
 			ContainerPort: p.Port,
@@ -33,15 +30,72 @@ func ProvisionCompute(ctx context.Context, k8sClient *vortexkube.K8sClient, proj
 		})
 	}
 
-	// Step 3: Create Deployment
+	// Build PVCs, pod Volumes, and VolumeMounts from the volume requests.
+	var (
+		volumeMounts []corev1.VolumeMount
+		podVolumes   []corev1.Volume
+		volumeInfos  []models.VolumeInfo
+	)
+	for _, v := range req.Volumes {
+		sizeGB := v.SizeGB
+		if sizeGB <= 0 {
+			sizeGB = 10
+		}
+		pvcName := fmt.Sprintf("%s-%s", computeID, v.Name)
+
+		pvc := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pvcName,
+				Namespace: namespace,
+				Labels: map[string]string{
+					"app":  computeID,
+					"type": "compute-volume",
+				},
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				StorageClassName: stringPtr("standard"),
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: createQuantity(fmt.Sprintf("%dGi", sizeGB)),
+					},
+				},
+			},
+		}
+		_, err := k8sClient.Clientset.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, pvc, metav1.CreateOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create PVC %s: %w", pvcName, err)
+		}
+
+		podVolumes = append(podVolumes, corev1.Volume{
+			Name: v.Name,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      v.Name,
+			MountPath: v.MountPath,
+		})
+		volumeInfos = append(volumeInfos, models.VolumeInfo{
+			Name:      v.Name,
+			SizeGB:    sizeGB,
+			MountPath: v.MountPath,
+		})
+	}
+
+	// Build the Deployment.
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      computeID,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"app":     computeID,
-				"project": projectID,
-				"type":    "compute",
+				"app":            computeID,
+				"project":        projectID,
+				"type":           "compute",
+				"vortex.io/name": req.Name,
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -54,11 +108,13 @@ func ProvisionCompute(ctx context.Context, k8sClient *vortexkube.K8sClient, proj
 					Labels: map[string]string{"app": computeID},
 				},
 				Spec: corev1.PodSpec{
+					Volumes: podVolumes,
 					Containers: []corev1.Container{
 						{
-							Name:  "app",
-							Image: req.Image,
-							Ports: containerPorts,
+							Name:         "app",
+							Image:        req.Image,
+							Ports:        containerPorts,
+							VolumeMounts: volumeMounts,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    createQuantity(defaultIfEmpty(req.CPU, "250m")),
@@ -105,12 +161,12 @@ func ProvisionCompute(ctx context.Context, k8sClient *vortexkube.K8sClient, proj
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
-	// Step 4: Create Service
-	servicePorts := []corev1.ServicePort{}
+	// Build Service.
+	servicePorts := make([]corev1.ServicePort, 0, len(req.Ports))
 	for _, p := range req.Ports {
 		servicePorts = append(servicePorts, corev1.ServicePort{
 			Port:       p.Port,
-			TargetPort: intstr.FromInt(int(p.Port)),
+			TargetPort: intstr.FromInt32(p.Port),
 			Protocol:   corev1.Protocol(p.Protocol),
 		})
 	}
@@ -119,10 +175,7 @@ func ProvisionCompute(ctx context.Context, k8sClient *vortexkube.K8sClient, proj
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      computeID,
 			Namespace: namespace,
-			Labels: map[string]string{
-				"app":     computeID,
-				"project": projectID,
-			},
+			Labels:    map[string]string{"app": computeID, "project": projectID},
 		},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
@@ -136,39 +189,34 @@ func ProvisionCompute(ctx context.Context, k8sClient *vortexkube.K8sClient, proj
 		return nil, fmt.Errorf("failed to create service: %w", err)
 	}
 
-	// Step 5: Build endpoints list
-	endpoints := []string{}
+	endpoints := make([]string, 0, len(req.Ports))
 	for _, p := range req.Ports {
 		endpoints = append(endpoints, fmt.Sprintf("%s:%d", computeID, p.Port))
 	}
 
-	// Step 6: Return response
 	return &models.ComputeResponse{
 		ID:        computeID,
 		Name:      req.Name,
 		Status:    "provisioning",
 		Endpoints: endpoints,
+		Volumes:   volumeInfos,
 		CreatedAt: metav1.Now().Time,
 	}, nil
 }
 
-// GetComputeStatus retrieves the current status of a provisioned compute instance
 func GetComputeStatus(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string, resourceID string) (*models.ComputeResponse, error) {
 	namespace := fmt.Sprintf("vortex-project-%s", projectID)
 
-	// Get the Deployment
 	deployment, err := k8sClient.Clientset.AppsV1().Deployments(namespace).Get(ctx, resourceID, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get deployment %s in namespace %s: %w", resourceID, namespace, err)
+		return nil, fmt.Errorf("failed to get deployment %s: %w", resourceID, err)
 	}
 
-	// Get the Service to extract endpoints
 	service, err := k8sClient.Clientset.CoreV1().Services(namespace).Get(ctx, resourceID, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("failed to get service %s in namespace %s: %w", resourceID, namespace, err)
+		return nil, fmt.Errorf("failed to get service %s: %w", resourceID, err)
 	}
 
-	// Build endpoints from service ports
 	endpoints := []string{}
 	if service != nil {
 		for _, port := range service.Spec.Ports {
@@ -176,7 +224,22 @@ func GetComputeStatus(ctx context.Context, k8sClient *vortexkube.K8sClient, proj
 		}
 	}
 
-	// Determine status based on replica readiness
+	// Reconstruct attached volumes from PVCs labelled for this compute instance.
+	pvcs, _ := k8sClient.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("app=%s,type=compute-volume", resourceID),
+	})
+	var volumes []models.VolumeInfo
+	if pvcs != nil {
+		for _, p := range pvcs.Items {
+			storage := p.Spec.Resources.Requests[corev1.ResourceStorage]
+			gb, _ := storage.AsInt64()
+			volumes = append(volumes, models.VolumeInfo{
+				Name:   p.Name,
+				SizeGB: int(gb / (1024 * 1024 * 1024)),
+			})
+		}
+	}
+
 	status := "provisioning"
 	if deployment.Status.ReadyReplicas > 0 {
 		status = "running"
@@ -184,85 +247,82 @@ func GetComputeStatus(ctx context.Context, k8sClient *vortexkube.K8sClient, proj
 
 	return &models.ComputeResponse{
 		ID:        resourceID,
-		Name:      deployment.Labels["app"],
+		Name:      deployment.Labels["vortex.io/name"],
 		Status:    status,
 		Endpoints: endpoints,
+		Volumes:   volumes,
 		CreatedAt: deployment.CreationTimestamp.Time,
 	}, nil
 }
 
-// DeleteCompute removes all resources associated with a provisioned compute instance
+func ListComputeStatus(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string) ([]*models.ComputeResponse, error) {
+	namespace := fmt.Sprintf("vortex-project-%s", projectID)
+
+	deployments, err := k8sClient.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "type=compute",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list compute in namespace %s: %w", namespace, err)
+	}
+
+	computes := make([]*models.ComputeResponse, 0, len(deployments.Items))
+	for _, d := range deployments.Items {
+		service, err := k8sClient.Clientset.CoreV1().Services(namespace).Get(ctx, d.Name, metav1.GetOptions{})
+		endpoints := []string{}
+		if err == nil {
+			for _, port := range service.Spec.Ports {
+				endpoints = append(endpoints, fmt.Sprintf("%s:%d", d.Name, port.Port))
+			}
+		}
+
+		status := "provisioning"
+		if d.Status.ReadyReplicas > 0 {
+			status = "running"
+		}
+
+		computes = append(computes, &models.ComputeResponse{
+			ID:        d.Name,
+			Name:      d.Labels["vortex.io/name"],
+			Status:    status,
+			Endpoints: endpoints,
+			CreatedAt: d.CreationTimestamp.Time,
+		})
+	}
+
+	return computes, nil
+}
+
 func DeleteCompute(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string, resourceID string) error {
 	namespace := fmt.Sprintf("vortex-project-%s", projectID)
-	deletionPolicy := metav1.DeletePropagationForeground
-	deletionOptions := metav1.DeleteOptions{
-		PropagationPolicy: &deletionPolicy,
-	}
+	foreground := metav1.DeletePropagationForeground
+	opts := metav1.DeleteOptions{PropagationPolicy: &foreground}
 
-	// Step 1: Delete Deployment (cascades to pods)
-	err := k8sClient.Clientset.AppsV1().Deployments(namespace).Delete(ctx, resourceID, deletionOptions)
+	err := k8sClient.Clientset.AppsV1().Deployments(namespace).Delete(ctx, resourceID, opts)
 	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete deployment %s in namespace %s: %w", resourceID, namespace, err)
+		return fmt.Errorf("failed to delete deployment %s: %w", resourceID, err)
 	}
 
-	// Step 2: Delete Service
 	err = k8sClient.Clientset.CoreV1().Services(namespace).Delete(ctx, resourceID, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete service %s in namespace %s: %w", resourceID, namespace, err)
+		return fmt.Errorf("failed to delete service %s: %w", resourceID, err)
+	}
+
+	// Delete any attached PVCs.
+	pvcs, err := k8sClient.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("app=%s,type=compute-volume", resourceID),
+	})
+	if err == nil {
+		for _, pvc := range pvcs.Items {
+			k8sClient.Clientset.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, pvc.Name, metav1.DeleteOptions{})
+		}
 	}
 
 	return nil
 }
 
-// Helper function to provide default value if string is empty
-func defaultIfEmpty(s string, defaultValue string) string {
+func defaultIfEmpty(s, def string) string {
 	if s == "" {
-		return defaultValue
+		return def
 	}
 	return s
-}
-
-// ListComputeStatus retrieves the current status of all compute instance
-func ListComputeStatus(ctx context.Context, k8sClient *vortexkube.K8sClient, projectID string) ([]*models.ComputeResponse, error) {
-	namespace := fmt.Sprintf("vortex-project-%s", projectID)
-
-	// Get the Deployment
-	deployments, err := k8sClient.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "type=compute",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list deployment %s in namespace %s: %w", namespace, err)
-	}
-
-	// Determine status based on replica readiness
-	computes := []*models.ComputeResponse{}
-	for _, deployment := range deployments.Items {
-		// Get the Service to extract endpoints
-		service, err := k8sClient.Clientset.CoreV1().Services(namespace).Get(ctx, deployment.Name, metav1.GetOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("failed to get service %s in namespace %s: %w", deployment.Name, err)
-		}
-		// Build endpoints from service ports
-		endpoints := []string{}
-		if service != nil {
-			for _, port := range service.Spec.Ports {
-				endpoints = append(endpoints, fmt.Sprintf("%s:%d", deployment.Name, port.Port))
-			}
-		}
-		status := "provisioning"
-		if deployment.Status.ReadyReplicas > 0 {
-			status = "running"
-		}
-
-		compute := &models.ComputeResponse{
-			ID:        deployment.Name,
-			Name:      deployment.Labels["app"],
-			Status:    status,
-			Endpoints: endpoints,
-			CreatedAt: deployment.CreationTimestamp.Time,
-		}
-		computes = append(computes, compute)
-	}
-
-	return computes, nil
 }
