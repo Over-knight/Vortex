@@ -1,6 +1,7 @@
 # Vortex - AWS-Like Cloud Platform on Kubernetes
 
 A cloud infrastructure management platform built on Kubernetes. Provision, manage, and scale cloud resources via REST APIs — inspired by AWS, running on your own infrastructure.
+You can checkout the Roadmap: https://docs.google.com/spreadsheets/d/1LBvNUcSjMEJ_dmiHMgr0JmpSTF5JPz7pWGYqtfKusIs/edit?usp=sharing
 
 ---
 
